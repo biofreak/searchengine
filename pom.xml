@@ -2,16 +2,20 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.biofreak</groupId>
+    <groupId>org.example</groupId>
     <artifactId>searchengine</artifactId>
-    <version>0.2-SNAPSHOT</version>
+    <version>0.0.1-SNAPSHOT</version>
 
     <properties>
         <github.global.server>github</github.global.server>
         <repository.name>searchengine</repository.name>
-        <repository.owner>biofreak</repository.owner>
+        <repository.owner>kridency</repository.owner>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
+        <jakarta.annotation.version>3.0.0</jakarta.annotation.version>
+        <lombok.version>1.18.38</lombok.version>
+        <selenium.version>4.27.0</selenium.version>
+        <httpclient5.version>5.2</httpclient5.version>
         <internal.repo.name>searchengine</internal.repo.name>
     </properties>
 
@@ -40,7 +44,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.30</version>
+            <version>${lombok.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -66,11 +70,6 @@
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>1.18.1</version>
-        </dependency>
-        <dependency>
-            <groupId>net.sourceforge.htmlunit</groupId>
-            <artifactId>htmlunit</artifactId>
-            <version>2.70.0</version>
         </dependency>
         <dependency>
             <groupId>org.apache.lucene.morphology</groupId>
@@ -102,6 +101,11 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
             <version>2.17.1</version>
         </dependency>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <version>${jakarta.annotation.version}</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -115,6 +119,22 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.12.1</version>
+                <executions>
+                    <execution>
+                        <id>default-compile</id>
+                        <configuration>
+                            <release>${maven.compiler.target}</release>
+                            <encoding>${project.build.sourceEncoding}</encoding>
+                            <annotationProcessorPaths>
+                                <path>
+                                    <groupId>org.projectlombok</groupId>
+                                    <artifactId>lombok</artifactId>
+                                    <version>${lombok.version}</version>
+                                </path>
+                            </annotationProcessorPaths>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -192,9 +212,8 @@
 
     <repositories>
         <repository>
-            <id>github</id>
-            <name>GitHub Apache Maven Packages - Russian Morphology</name>
-            <url>https://maven.pkg.github.com/skillbox-java/russianmorphology/</url>
+            <id>skillbox-gitlab</id>
+            <url>https://gitlab.skillbox.ru/api/v4/projects/263574/packages/maven</url>
             <snapshots>
                 <enabled>true</enabled>
                 <updatePolicy>always</updatePolicy>

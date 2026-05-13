@@ -1,14 +1,16 @@
 # example values
 server:
   port: 8080
+
 spring:
   jackson:
     default-property-inclusion: non_null
     serialization:
       write-dates-as-timestamps: false
+
   datasource:
     username: root
-    password: "root"
+    password: 1gjAVnJ
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/search_engine
     hikari:
@@ -28,10 +30,12 @@ spring:
         jdbc:
           batch_size: 100
     generate-ddl: true
+
   sql:
     init:
       mode: always
       platform: mysql
+
 indexing-settings:
   sites:
     - url: https://sendel.ru
