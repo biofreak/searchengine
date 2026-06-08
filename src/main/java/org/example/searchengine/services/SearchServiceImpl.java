@@ -54,12 +54,12 @@ public class SearchServiceImpl implements SearchService {
                 .filter(Predicate.not(String::isEmpty))
                 .flatMap(string -> Arrays.stream(string.split("([.!?](\\s+|\\z)|\\z)")))
                 .map(string -> {
-                    List<String> boldList = Arrays.stream(string.replaceAll("[^а-яА-Яa-zA-Z']", " ")
+                    Set<String> boldList = Arrays.stream(string.replaceAll("[^а-яА-Яa-zA-Z']", " ")
                                     .split("(\\s+|$)"))
                             .filter(Predicate.not(String::isEmpty))
                             .filter(word -> word.matches("[а-яА-Яa-zA-Z]{2,}"))
                             .filter(word -> lemmaSet.stream().anyMatch(lemma ->
-                                    getNormalForms(word).anyMatch(lemma::equals))).toList();
+                                    getNormalForms(word).anyMatch(lemma::equals))).collect(Collectors.toSet());
 
                     String bolded = string;
                     for (String word : boldList) {
