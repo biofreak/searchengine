@@ -34,30 +34,19 @@ public class SearchServiceImpl implements SearchService {
     private final Optional<SplitToLemmas> splitterRus = Optional.ofNullable(SplitToLemmas.getInstanceRus());
     private final Optional<SplitToLemmas> splitterEng = Optional.ofNullable(SplitToLemmas.getInstanceEng());
 
-    private Map<String, List<Lemma>> lemmas;
-
     private final double MENTION_COEFFICIENT = 0.7;
     private final String EMPTY_REQUEST_ERROR = "Задан пустой поисковый запрос";
 
     @Cacheable(value = "results", key = "{ #query, #site }")
     public List<SearchResult> startSearch(String query, String site) {
         if (!query.isEmpty()) {
-            List<Site> siteList = site == null
-                    ? siteRepository.findAll() : List.of(siteRepository.findByUrl(site).orElseThrow());
-            List<String> lemmaList = getLemmasFromQuery(query, siteList);
-            List<Page> pageList = getPagesFromLemmas(lemmaList, indexRepository.getPagesFromIndexIn(
-                    indexRepository.findByLemmaIn(Optional.ofNullable(lemmas)
-                            .map(x -> x.get(lemmaList.getFirst())).orElse(List.of()))
-            ));
-            return getResultsFromPages(pageList);
+            var siteList = site==null ? siteRepository.findAll() : List.of(siteRepository.findByUrl(site).orElseThrow());
+            Map<String, List<Lemma>> lemmas = splitToLemmas(query).keySet().stream()
+                    .map(lemma -> Map.entry(lemma, lemmaRepository.findBySiteInAndLemma(siteList, lemma)))
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+            return getResults(lemmas, indexRepository.getPagesFromIndexIn(arrangeLemmas(siteList, lemmas)));
         }
         throw new BadRequestException(EMPTY_REQUEST_ERROR);
-    }
-
-    private List<Page> getPagesFromLemmas(List<String> lemmaList, List<Page> pageList) {
-        return lemmaList.isEmpty() ? pageList : getPagesFromLemmas(lemmaList.subList(1, lemmaList.size()),
-                indexRepository.getPagesFromIndexIn(indexRepository.findByPageInAndLemmaIn(pageList,
-                lemmas.get(lemmaList.getFirst()))));
     }
 
     private String getSnippetFromContent(String htmlCode, Set<String> lemmaSet) {
@@ -81,32 +70,27 @@ public class SearchServiceImpl implements SearchService {
                 .limit(3).map(Map.Entry::getValue).collect(Collectors.joining("<br />"));
     }
 
-    private List<String> getLemmasFromQuery(String query, List<Site> siteList) {
-        Map<String, Long> lemmaMap = splitToLemmas(query);
-        lemmas = lemmaMap.keySet().stream()
-                .map(lemma -> Map.entry(lemma, lemmaRepository.findBySiteInAndLemma(siteList, lemma)))
-                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-        int pageTotal = pageRepository.countAllBySiteIn(siteList);
-        return lemmaMap.keySet().stream()
+    private Set<String> arrangeLemmas(List<Site> siteList, Map<String, List<Lemma>> lemmas) {
+        return lemmas.keySet().stream()
                 .map(lemma -> Map.entry(lemma, lemmas.get(lemma).stream()
                         .mapToInt(x -> x == null ? 0 : x.getFrequency()).sum()))
                 .filter(entry -> entry.getValue() > 0)
                 .sorted(Map.Entry.comparingByValue())
                 .filter(entry -> {
+                    int pageTotal = pageRepository.countAllBySiteIn(siteList);
                     return pageTotal > 0; // && (double) (entry.getValue() / pageTotal) > MENTION_COEFFICIENT;
                 }).map(Map.Entry::getKey)
-                .toList();
+                .collect(Collectors.toSet());
     }
 
-    private List<SearchResult> getResultsFromPages(List<Page> pageList) {
+    private List<SearchResult> getResults(Map<String, List<Lemma>> lemmas, List<Page> pageList) {
         Map<Page, Double> rankMap = pageList.stream().map(pageEntity -> Map.entry(pageEntity,
                                         indexRepository.findByPageInAndLemmaIn(List.of(pageEntity),
                                                         lemmas.values().stream().flatMap(Collection::stream).toList())
                                                 .stream().mapToDouble(Index::getRank).sum()))
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-        double maxRank = rankMap.entrySet().stream().max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getValue).orElse(0.0);
+        double maxRank = rankMap.values().stream().mapToDouble(v -> v).max().orElse(0.0);
 
         return pageList.stream().sorted(Comparator
                         .comparingDouble(pageEntity -> maxRank > 0.0 ? rankMap.get(pageEntity) / maxRank : 0.0)

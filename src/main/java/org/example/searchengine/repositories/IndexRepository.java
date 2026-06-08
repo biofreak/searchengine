@@ -10,14 +10,16 @@ import org.example.searchengine.model.Lemma;
 import org.example.searchengine.model.Page;
 
 import java.util.List;
+import java.util.Set;
 
 @Repository
 public interface IndexRepository extends JpaRepository<Index, Integer> {
-    List<Index> findByLemmaIn(List<Lemma> lemmaList);
     List<Index> findByPageInAndLemmaIn(List<Page> pageList, List<Lemma> lemmaList);
 
-    @Query("select ind.page from Index as ind where ind in :data")
-    List<Page> getPagesFromIndexIn(List<Index> data);
+    @Query("select idx.page " +
+            "from Index idx join idx.lemma lemma where lemma.lemma in :data " +
+            "group by idx.page having count(distinct lemma.lemma) = :#{#data.size()}")
+    List<Page> getPagesFromIndexIn(Set<String> data);
 
     @Transactional
     @Modifying
