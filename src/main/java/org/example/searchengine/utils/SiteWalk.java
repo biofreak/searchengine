@@ -10,36 +10,38 @@ import java.util.*;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.RecursiveTask;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class SiteWalk extends RecursiveTask<Stream<String>> {
-    private final List<String> REFS;
+    private final Set<String> REFS;
 
     private final Page PAGE;
 
     private final String BASE_ADDRESS;
 
-    private final String CHILD_REGEX = "(/[\\S&&[^/]]+)*(/[\\S&&[^/.]]+)(.htm(l)?)?";
-
-    public SiteWalk(List<String> urlList, Page pageEntity, String baseAddress) {
+    public SiteWalk(Set<String> urlList, Page pageEntity, String baseAddress) {
         REFS = urlList;
         PAGE = pageEntity;
-        this.BASE_ADDRESS = baseAddress;
+        this.BASE_ADDRESS = baseAddress.replaceAll("/$", "");
     }
 
-    private String stripSlash(String link) {
-        return (link.lastIndexOf("/") == link.length() - 1) ? link.substring(0, link.length() - 1) : link;
-    }
+    private String stripSlash(String link) { return link.replaceAll("([^/])/$", "$1"); }
 
-    private Stream<String> getReferences(Document html, String regex) {
+    private Stream<String> getReferences(Document html, Pattern regexPattern) {
         try {
             return html.select("a[href]").stream()
-                    .map(link -> link.attr("href").contains(BASE_ADDRESS) ? link.attr("href") :
-                            (BASE_ADDRESS + link.attr("href").strip())).map(this::stripSlash)
-                    .map(link -> link.contains("?") ? link.substring(0, link.lastIndexOf("?")) : link)
-                    .map(link -> link.contains("#") ? link.substring(0, link.lastIndexOf("#")) : link)
-                    .filter(link -> !link.isEmpty()).filter(link -> link.matches(regex))
-                    .filter(link -> REFS.stream().noneMatch(Predicate.isEqual(link))).distinct();
+                    .map(link -> link.attr("abs:href"))
+                    .map(this::stripSlash)
+                    .filter(link -> link.startsWith(BASE_ADDRESS))
+                    .map(link -> link.contains("?") ? link.substring(0, link.indexOf("?")) : link)
+                    .map(link -> link.contains("#") ? link.substring(0, link.indexOf("#")) : link)
+                    .filter(Predicate.not(String::isEmpty))
+                    .map(subPath -> subPath.replaceAll("^/|/$", ""))
+                    .filter(link -> !REFS.contains(link))
+                    .map(x -> x.replace("\uFEFF", ""))
+                    .map(String::strip)
+                    .distinct();
         } catch (RuntimeException e) {
             return Stream.of();
         }
@@ -50,7 +52,10 @@ public class SiteWalk extends RecursiveTask<Stream<String>> {
         try {
             String path = PAGE.getPath();
             String address = BASE_ADDRESS + (path.equals("/") ? "" : path);
-            return getReferences(Jsoup.parse(PAGE.getContent(), BASE_ADDRESS), BASE_ADDRESS + CHILD_REGEX)
+            String fullRegexString = "^" + Pattern.quote(BASE_ADDRESS) + "(/.*)?";
+            Pattern regexPattern = Pattern.compile(fullRegexString,
+                    Pattern.UNICODE_CHARACTER_CLASS | Pattern.CASE_INSENSITIVE);
+            return getReferences(Jsoup.parse(PAGE.getContent(), BASE_ADDRESS), regexPattern)
                     .filter(link -> !link.equals(address));
         } catch (CancellationException e) {
             throw new CancellationException(IndexError.INTERRUPTED.toString());

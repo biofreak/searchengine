@@ -25,7 +25,9 @@ public interface IndexRepository extends JpaRepository<Index, Integer> {
     @Modifying
     @Query(value = "INSERT INTO `index` (page_id, lemma_id, `rank`) " +
             "SELECT ind.* FROM JSON_TABLE(:data, '$[*]'" +
-            " COLUMNS (page_id INT PATH '$.page_id', lemma_id INT PATH '$.lemma_id', `rank` FLOAT PATH '$.rank')) ind",
+            " COLUMNS (page_id INT PATH '$.page_id', " +
+            "lemma_id INT PATH '$.lemma_id', " +
+            "`rank` FLOAT PATH '$.rank')) ind",
             nativeQuery = true)
     void insertAll(String data);
 }

@@ -2,6 +2,7 @@ package org.example.searchengine.model;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import jakarta.persistence.Index;
 import lombok.*;
@@ -36,6 +37,7 @@ public class Page implements Serializable {
     @Column(name = "content", columnDefinition = "mediumtext", nullable = false)
     @NonNull
     private String content;
+    @JsonIgnore
     @OneToMany(fetch = FetchType.EAGER, mappedBy = "page", orphanRemoval = true, cascade = CascadeType.REMOVE)
-    private final   List<org.example.searchengine.model.Index> indices = new ArrayList<>();
+    private final List<org.example.searchengine.model.Index> indices = new ArrayList<>();
 }

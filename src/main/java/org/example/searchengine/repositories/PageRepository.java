@@ -23,7 +23,9 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
     @Modifying
     @Query(value = "INSERT INTO `page` (site_id, `path`, `code`, content) " +
             "SELECT pg.* FROM JSON_TABLE(:data, " +
-            "'$[*]' COLUMNS (site_id INT PATH '$.site.id', `path` TEXT PATH '$.path', `code` INT PATH '$.code', " +
+            "'$[*]' COLUMNS (site_id INT PATH '$.site.id', " +
+            "`path` TEXT PATH '$.path', " +
+            "`code` INT PATH '$.code', " +
             "content MEDIUMTEXT PATH '$.content')) pg", nativeQuery = true)
-    void insertAll(@Param("data") String data);
+    void insertAll(String data);
 }

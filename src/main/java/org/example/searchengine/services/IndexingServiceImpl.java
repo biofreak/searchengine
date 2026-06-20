@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
+import org.jsoup.Jsoup;
 import org.springframework.stereotype.Service;
 import org.example.searchengine.config.SiteList;
 import org.example.searchengine.dto.indexing.IndexingResponse;
@@ -21,8 +22,10 @@ import java.net.*;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -34,41 +37,41 @@ public class IndexingServiceImpl implements IndexingService  {
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
     private final SiteList sites;
-    private final int PAGES_CHUNK = 250;
+    private final int PAGES_CHUNK = 100;
 
     private ForkJoinPool taskPool = new ForkJoinPool();
-    private final Vector<ForkJoinTask<?>> TASKS = new Vector<>();
+    private final Set<ForkJoinTask<?>> TASKS = ConcurrentHashMap.newKeySet();
 
     private final Optional<SplitToLemmas> splitterEng = Optional.ofNullable(SplitToLemmas.getInstanceEng());
     private final Optional<SplitToLemmas> splitterRus = Optional.ofNullable(SplitToLemmas.getInstanceRus());
-
-    private final Set<Lemma> lemmaBuffer = ConcurrentHashMap.newKeySet();
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-    private final HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build();
+    private final HttpClient client = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1).followRedirects(HttpClient.Redirect.NORMAL).build();
 
     public IndexingResponse fullIndex() {
         IndexingResponse result = new IndexingResponse(true);
         if (!siteRepository.existsByStatusIs(IndexStatus.INDEXING)) {
-            siteRepository.findAll().stream().map(Site::getId).peek(id ->
-                    siteRepository.updateStatus(id, IndexStatus.INDEXING,null)).forEach(siteRepository::deleteById);
+            siteRepository.findAll().stream().map(Site::getId)
+                    .peek(id -> siteRepository.updateStatus(id, IndexStatus.INDEXING,null))
+                    .forEach(siteRepository::deleteById);
             sites.getSites().forEach(config -> TASKS.add(taskPool.submit(() ->{
-                List<String> urlBuffer = new ArrayList<>() {{ add(config.getUrl()); }};
-                Site siteEntity = serializeSite(urlBuffer.getFirst(), config.getName());
-                    try {
-                        serializePages(siteEntity, urlBuffer);
-                        walkTask(urlBuffer, urlBuffer, siteEntity).filter(Objects::nonNull).map(pageEntity ->
-                                taskPool.submit(() -> serializeIndex(pageEntity))).peek(TASKS::add).forEach(task -> {
-                                    try {
-                                        task.join();
-                                        TASKS.remove(task);
-                                    } catch (CancellationException e) {
-                                        throw new CancellationException(IndexError.INTERRUPTED.toString());
-                                    }
-                                });
-                        siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXED, null);
-                    } catch (RuntimeException e) {
-                        siteRepository.updateStatus(siteEntity.getId(), IndexStatus.FAILED, e.getMessage());
-                    }
+                Set<String> urlBuffer = new HashSet<>() {{ add(config.getUrl().replaceAll("/$", "")); }};
+                Site siteEntity = serializeSite(urlBuffer.stream().findAny().orElse(""), config.getName());
+                try {
+                    serializePages(siteEntity, urlBuffer);
+                    walkTask(urlBuffer, urlBuffer, siteEntity).map(pageEntity ->
+                            taskPool.submit(() -> serializeIndex(pageEntity))).peek(TASKS::add).forEach(task -> {
+                                try {
+                                    task.join();
+                                    TASKS.remove(task);
+                                } catch (CancellationException e) {
+                                    throw new CancellationException(IndexError.INTERRUPTED.toString());
+                                }
+                            });
+                    siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXED, null);
+                } catch (RuntimeException e) {
+                    siteRepository.updateStatus(siteEntity.getId(), IndexStatus.FAILED, e.getMessage());
+                }
             })));
         } else {
             result.setResult(false);
@@ -98,26 +101,28 @@ public class IndexingServiceImpl implements IndexingService  {
         return response;
     }
 
-    private Stream<Page> walkTask(List<String> urlBuffer, List<String> walkSet, Site siteEntity) {
+    private Stream<Page> walkTask(Set<String> urlBuffer, Set<String> walkSet, Site siteEntity) {
         try {
-            List<String> children = walkSet.stream()
+            Set<String> children = walkSet.parallelStream()
                     .map(x -> x.replace(siteEntity.getUrl(), ""))
                     .map(path -> path.isEmpty() ? "/" : path)
                     .map(path -> pageRepository.findBySiteAndPath(siteEntity, path).orElse(null))
                     .filter(Objects::nonNull)
                     .map(pageEntity -> taskPool.submit(new SiteWalk(urlBuffer, pageEntity, siteEntity.getUrl())))
                     .peek(TASKS::add).flatMap(task -> {
-                        Stream<String> result = task.join();
-                        TASKS.remove(task);
-                        return result;
-                    }).distinct().toList();
+                        try {
+                            return task.join();
+                        } finally {
+                            TASKS.remove(task);
+                        }}).collect(Collectors.toSet());
             if (children.isEmpty()) {
-                return urlBuffer.stream().map(x -> x.replace(siteEntity.getUrl(), ""))
+                return urlBuffer.stream()
+                        .map(x -> x.replace(siteEntity.getUrl(), ""))
                         .map(path -> path.isEmpty() ? "/" : path)
-                        .map(path -> pageRepository.findBySiteAndPath(siteEntity, path).orElse(null));
+                        .flatMap(path -> pageRepository.findBySiteAndPath(siteEntity, path).stream());
             } else {
                 serializePages(siteEntity, children);
-                return walkTask(Stream.concat(urlBuffer.stream(), children.stream()).toList(), children, siteEntity);
+                return walkTask(Stream.concat(urlBuffer.stream(), children.stream()).collect(Collectors.toSet()), children, siteEntity);
             }
         } catch(CancellationException e) {
             throw new CancellationException(IndexError.INTERRUPTED.toString());
@@ -136,10 +141,11 @@ public class IndexingServiceImpl implements IndexingService  {
                 Map.Entry<String, String> configEntry = siteConfig.entrySet().iterator().next();
                 Site siteEntity = serializeSite(configEntry.getKey(), configEntry.getValue());
                 pageRepository.findBySiteAndPath(siteEntity, path).ifPresent(pageEntity -> {
-                    decreaseFrequencies(pageEntity.getIndices().stream().map(Index::getLemma).toList());
+                    decreaseFrequencies(pageEntity.getSite().getId(), pageEntity.getIndices().stream()
+                                    .map(Index::getLemma).map(Lemma::getLemma).collect(Collectors.toSet()));
                     pageRepository.delete(pageEntity);
                 });
-                serializePages(siteEntity, List.of(link));
+                serializePages(siteEntity, Set.of(link));
                 siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXING, null);
                 pageRepository.findBySiteAndPath(siteEntity, path).ifPresent(this::serializeIndex);
                 siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXED, null);
@@ -157,49 +163,58 @@ public class IndexingServiceImpl implements IndexingService  {
             return siteRepository.findByUrl(url).orElseGet(() -> siteRepository.saveAndFlush(new Site(url, name)));
     }
 
-    private void serializePages(Site siteEntity, List<String> urlList) {
-        int i = urlList.size() % PAGES_CHUNK, j = (urlList.size() - i) / PAGES_CHUNK;
-        for (int k = 0, start = 0; k <= j; k++, start = k * PAGES_CHUNK) {
-            try {
-                pageRepository.insertAll(urlList.subList(start, k < j ? (start + PAGES_CHUNK) : (start + i)).stream()
-                        .map(url -> taskPool.submit(() -> {
-                                String path = url.replace(siteEntity.getUrl(), "");
-                                URI baseUri = URI.create(siteEntity.getUrl());
-                                HttpResponse<String> response = getHttpResponse(
-                                        new URI(baseUri.getScheme(), baseUri.getHost(), path, null));
-                                return new Page(siteEntity, path.isEmpty() ? "/" : path, response.statusCode(), response.body());
-                        })).peek(TASKS::add).map(task -> {
-                            try {
-                                String result = objectMapper.writeValueAsString(task.join());
-                                TASKS.remove(task);
-                                return result;
-                            } catch (CancellationException e) {
-                                throw new CancellationException(IndexError.INTERRUPTED.toString());
-                            } catch (JsonProcessingException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }).collect(Collectors.joining(",", "[", "]")));
-            } catch (CancellationException e) {
-                throw new CancellationException(IndexError.INTERRUPTED.toString());
-            } catch (RuntimeException e) {
-                throw new RuntimeException(e.getMessage());
+    private void serializePages(Site siteEntity, Set<String> urlSet) {
+        Semaphore httpSemaphore = new Semaphore(PAGES_CHUNK);
+        ConcurrentLinkedQueue<String> chunkBuffer = new ConcurrentLinkedQueue<>();
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (String url : urlSet) {
+                executor.submit(() -> {
+                    try {
+                        httpSemaphore.acquire();
+                        String path = new String(url.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8)
+                                .replace(siteEntity.getUrl(), "");
+                        URI baseUri = URI.create(siteEntity.getUrl());
+                        URI base = new URI(baseUri.getScheme(), baseUri.getAuthority(), baseUri.getPath(), null);
+                        HttpResponse<String> response = getHttpResponse(base.resolve(baseUri.getPath() + path + "/"));
+                        path = URLDecoder.decode(path.isEmpty() ? "/" : path, StandardCharsets.UTF_8);
+                        String jsonPage = objectMapper.writeValueAsString(
+                                new Page(siteEntity, path, response.statusCode(), response.body()));
+                        httpSemaphore.release();
+                        chunkBuffer.add(jsonPage);
+                        if (chunkBuffer.size() >= PAGES_CHUNK) {
+                            savePages(chunkBuffer);
+                        }
+                    } catch (Exception e) {
+                        httpSemaphore.release();
+                    }
+                });
             }
+        }
+        savePages(chunkBuffer);
+    }
+
+    private void savePages(ConcurrentLinkedQueue<String> buffer) {
+        if (buffer.isEmpty()) return;
+        List<String> toInsert = new ArrayList<>(buffer);
+        buffer.clear();
+        if (!toInsert.isEmpty()) {
+            String jsonArray = toInsert.stream().collect(Collectors.joining(",", "[", "]"));
+            pageRepository.insertAll(jsonArray);
         }
     }
 
-    private Map<Lemma, Long> serializeLemmas(Page pageEntity) {
+    private synchronized Map<Lemma, Long> serializeLemmas(Page pageEntity) {
         try {
             Site siteEntity = pageEntity.getSite();
-            String text = pageEntity.getContent();
+            String text = Jsoup.parse(pageEntity.getContent()).text();
             Map<String, Long> lemmaMap = splitterEng.orElseThrow().splitTextToLemmas(text);
             lemmaMap.putAll(splitterRus.orElseThrow().splitTextToLemmas(text));
-            Set<String> lemmas = lemmaMap.keySet();
-            lemmaBuffer.addAll(lemmaRepository.saveAll(lemmas.stream().filter(x -> lemmaBuffer.stream()
-                            .noneMatch(y -> y.getSite().getId() == siteEntity.getId() && y.getLemma().equals(x)))
-                    .map(x -> new Lemma(siteEntity, x)).toList()));
-            List<Lemma> result = lemmaBuffer.stream().filter(x -> lemmas.stream()
-                    .anyMatch(y -> x.getSite().getId() == siteEntity.getId() && x.getLemma().equals(y))).toList();
-            increaseFrequencies(result);
+            Set<String> lemmas = lemmaRepository.findExistingLemmas(pageEntity.getSite().getId(), lemmaMap.keySet());
+            List<Lemma> result = lemmaRepository.saveAll(lemmaMap.keySet().stream()
+                    .filter(Predicate.not(lemmas::contains))
+                    .map(x -> new Lemma(siteEntity, x))
+                    .toList());
+            increaseFrequencies(pageEntity.getSite().getId(), lemmaMap.keySet());
             return result.stream().map(lemmaEntity -> Map.entry(lemmaEntity, lemmaMap.get(lemmaEntity.getLemma())))
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
         } catch (CancellationException e) {
@@ -212,16 +227,15 @@ public class IndexingServiceImpl implements IndexingService  {
             indexRepository.insertAll(Stream.of(taskPool.submit(() -> serializeLemmas(pageEntity))).peek(TASKS::add)
                     .flatMap(task -> {
                         try {
-                            Map<Lemma, Long> result = task.join();
-                            TASKS.remove(task);
-                            return result.entrySet().stream()
-                                    .map(mapEntry -> {
+                            return task.join().entrySet().stream().map(mapEntry -> {
                                         record index(int page_id, int lemma_id, float rank) {}
                                         return new index(pageEntity.getId(), mapEntry.getKey().getId(),
                                                 Float.valueOf(mapEntry.getValue()));
                                     });
                         } catch (CancellationException e) {
                             throw new CancellationException(IndexError.INTERRUPTED.toString());
+                        } finally {
+                            TASKS.remove(task);
                         }
                     }).map(indexRecord -> {
                         try {
@@ -239,15 +253,15 @@ public class IndexingServiceImpl implements IndexingService  {
 
     private HttpResponse<String> getHttpResponse(URI uri) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder().uri(uri).build();
-        return client.send(request, HttpResponse.BodyHandlers.ofString());
+        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
     }
 
-    private void increaseFrequencies(List<Lemma> lemmas) {
-            lemmaRepository.updateFrequencies(lemmas, 1);
+    private void increaseFrequencies(long siteId, Set<String> lemmas) {
+            lemmaRepository.updateFrequencies(siteId, lemmas, 1);
     }
 
-    private void decreaseFrequencies(List<Lemma> lemmas) {
-        lemmaRepository.updateFrequencies(lemmas, -1);
+    private void decreaseFrequencies(long siteId, Set<String> lemmas) {
+        lemmaRepository.updateFrequencies(siteId, lemmas, -1);
     }
 
     private Map<String, String> getConfigSite(String site_regex) {

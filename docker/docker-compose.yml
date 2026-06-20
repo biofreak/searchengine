@@ -3,6 +3,8 @@ services:
     image: mysql:8.0.23
     container_name: mysql-db
     restart: always
+    cap_add:
+      - SYS_NICE
     environment:
       MYSQL_ROOT_PASSWORD: 1gjAVnJ
       MYSQL_DATABASE: search_engine
