@@ -63,9 +63,10 @@ public class IndexingServiceImpl implements IndexingService  {
                             taskPool.submit(() -> serializeIndex(pageEntity))).peek(TASKS::add).forEach(task -> {
                                 try {
                                     task.join();
-                                    TASKS.remove(task);
                                 } catch (CancellationException e) {
                                     throw new CancellationException(IndexError.INTERRUPTED.toString());
+                                } finally {
+                                    TASKS.remove(task);
                                 }
                             });
                     siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXED, null);
@@ -112,6 +113,8 @@ public class IndexingServiceImpl implements IndexingService  {
                     .peek(TASKS::add).flatMap(task -> {
                         try {
                             return task.join();
+                        } catch (CancellationException e) {
+                            throw new CancellationException(IndexError.INTERRUPTED.toString());
                         } finally {
                             TASKS.remove(task);
                         }}).collect(Collectors.toSet());
@@ -174,8 +177,9 @@ public class IndexingServiceImpl implements IndexingService  {
                         String path = new String(url.getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8)
                                 .replace(siteEntity.getUrl(), "");
                         URI baseUri = URI.create(siteEntity.getUrl());
-                        URI base = new URI(baseUri.getScheme(), baseUri.getAuthority(), baseUri.getPath(), null);
-                        HttpResponse<String> response = getHttpResponse(base.resolve(baseUri.getPath() + path + "/"));
+                        HttpResponse<String> response = getHttpResponse(
+                                new URI(baseUri.getScheme(), baseUri.getAuthority(), baseUri.getPath(), null)
+                                        .resolve(baseUri.getPath() + path + "/"));
                         path = URLDecoder.decode(path.isEmpty() ? "/" : path, StandardCharsets.UTF_8);
                         String jsonPage = objectMapper.writeValueAsString(
                                 new Page(siteEntity, path, response.statusCode(), response.body()));
@@ -191,16 +195,6 @@ public class IndexingServiceImpl implements IndexingService  {
             }
         }
         savePages(chunkBuffer);
-    }
-
-    private void savePages(ConcurrentLinkedQueue<String> buffer) {
-        if (buffer.isEmpty()) return;
-        List<String> toInsert = new ArrayList<>(buffer);
-        buffer.clear();
-        if (!toInsert.isEmpty()) {
-            String jsonArray = toInsert.stream().collect(Collectors.joining(",", "[", "]"));
-            pageRepository.insertAll(jsonArray);
-        }
     }
 
     private synchronized Map<Lemma, Long> serializeLemmas(Page pageEntity) {
@@ -248,6 +242,16 @@ public class IndexingServiceImpl implements IndexingService  {
             throw new CancellationException(IndexError.INTERRUPTED.toString());
         } catch (RuntimeException e) {
             throw new RuntimeException(e.getMessage());
+        }
+    }
+
+    private void savePages(ConcurrentLinkedQueue<String> buffer) {
+        if (buffer.isEmpty()) return;
+        List<String> toInsert = new ArrayList<>(buffer);
+        buffer.clear();
+        if (!toInsert.isEmpty()) {
+            String jsonArray = toInsert.stream().collect(Collectors.joining(",", "[", "]"));
+            pageRepository.insertAll(jsonArray);
         }
     }
 
