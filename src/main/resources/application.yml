@@ -10,9 +10,9 @@ spring:
 
   datasource:
     username: root
-    password: 1gjAVnJ
+    password: ${MYSQL_ROOT_PASSWORD:1gjAVnJ}
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/search_engine?rewriteBatchedStatements=true
+    url: jdbc:mysql://localhost:3306/${MYSQL_DATABASE:search_engine}?rewriteBatchedStatements=true
     hikari:
       data-source-properties:
         rewriteBatchedStatements: true
@@ -20,7 +20,7 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: create
+      ddl-auto: create-drop
     show-sql: true
     properties:
       hibernate:
@@ -28,7 +28,7 @@ spring:
         globally_quoted_identifiers: true
         order_inserts: true
         jdbc:
-          batch_size: 100
+          batch_size: 200
     generate-ddl: true
 
   sql:
@@ -38,5 +38,5 @@ spring:
 
 indexing-settings:
   sites:
-    - url: https://sendel.ru
+    - url: https://sendel.ru/
       name: Sendel.Ru

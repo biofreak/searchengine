@@ -10,7 +10,6 @@ import java.util.*;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.RecursiveTask;
 import java.util.function.Predicate;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 public class SiteWalk extends RecursiveTask<Stream<String>> {
@@ -28,19 +27,20 @@ public class SiteWalk extends RecursiveTask<Stream<String>> {
 
     private String stripSlash(String link) { return link.replaceAll("([^/])/$", "$1"); }
 
-    private Stream<String> getReferences(Document html, Pattern regexPattern) {
+    private Stream<String> getReferences(Document html) {
         try {
             return html.select("a[href]").stream()
                     .map(link -> link.attr("abs:href"))
                     .map(this::stripSlash)
                     .filter(link -> link.startsWith(BASE_ADDRESS))
-                    .map(link -> link.contains("?") ? link.substring(0, link.indexOf("?")) : link)
+                    .map(link ->    link.contains("?") ? link.substring(0, link.indexOf("?")) : link)
                     .map(link -> link.contains("#") ? link.substring(0, link.indexOf("#")) : link)
                     .filter(Predicate.not(String::isEmpty))
                     .map(subPath -> subPath.replaceAll("^/|/$", ""))
                     .filter(link -> !REFS.contains(link))
                     .map(x -> x.replace("\uFEFF", ""))
                     .map(String::strip)
+                    .map(x -> x.replaceAll(" ", "%20"))
                     .distinct();
         } catch (RuntimeException e) {
             return Stream.of();
@@ -52,10 +52,7 @@ public class SiteWalk extends RecursiveTask<Stream<String>> {
         try {
             String path = PAGE.getPath();
             String address = BASE_ADDRESS + (path.equals("/") ? "" : path);
-            String fullRegexString = "^" + Pattern.quote(BASE_ADDRESS) + "(/.*)?";
-            Pattern regexPattern = Pattern.compile(fullRegexString,
-                    Pattern.UNICODE_CHARACTER_CLASS | Pattern.CASE_INSENSITIVE);
-            return getReferences(Jsoup.parse(PAGE.getContent(), BASE_ADDRESS), regexPattern)
+            return getReferences(Jsoup.parse(PAGE.getContent(), BASE_ADDRESS))
                     .filter(link -> !link.equals(address));
         } catch (CancellationException e) {
             throw new CancellationException(IndexError.INTERRUPTED.toString());

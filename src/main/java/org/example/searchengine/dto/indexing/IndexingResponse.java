@@ -1,13 +1,11 @@
 package org.example.searchengine.dto.indexing;
 
+import lombok.Builder;
 import lombok.Data;
 
 @Data
+@Builder
 public class IndexingResponse {
-    public IndexingResponse(Boolean result) {
-        this.result = result;
-    }
-
     private Boolean result;
     private String error;
 }

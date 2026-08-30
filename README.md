@@ -28,7 +28,7 @@
 ```xml
 <servers>
   <server>
-    <id>skillbox-gitlab</id>
+      <id>skillbox-gitlab</id>
       <password>token</password>>
   </server>
 </servers>
@@ -44,17 +44,34 @@
 под проект командой:
 
 ```bash
-docker run -d --name=searchEngine -e="MYSQL_ROOT_PASSWORD=123456" -e="MYSQL_DATABASE=search_engine" -p3306:3306 mysql
+docker run -d --name=searchEngine -e="MYSQL_ROOT_PASSWORD=1gjAVnJ" -e="MYSQL_DATABASE=search_engine" -p3306:3306 mysql
 ```
 
-Имя пользователя по-умолчанию `root`, настройки проекта в `src/resources/application.yaml`
+Имя пользователя по-умолчанию `root`, настройки проекта содержаться в файле `src/resources/application.yaml`
 соответствуют настройкам контейнера, менять их не требуется.
 
-Если используете MySQL без докера, то создайте бд `lemma` и замените логин и пароль
+Если используете MySQL без докера, то создайте бд `search_engine` и замените логин и пароль
 в файле конфигурации `src/resources/application.yaml`:
 
 ```yaml
 spring:
   datasource:
     username: root # имя пользователя
-    password: "123456" # пароль пользователя
+    password: "1gjAVnJ" # пароль пользователя
+```
+
+### Настройки для запуска
+
+Для выбора сайтов, по которым можно делать поиск, используется названный выше файл конфигурации. Если сайт не указан в списке, то индексацию и поиск выполнить не получится.
+Файл "application.yaml" содержит примерный список сайтов:
+```yaml
+indexing-settings:
+  sites:
+    - url: https://ipfran.ru
+      name: Ipfran
+    - url: https://www.svetlovka.ru
+      name: Svetlovka
+    - url: https://www.playback.ru
+      name: PlayBack
+```
+

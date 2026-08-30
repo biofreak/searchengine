@@ -2,11 +2,12 @@ package org.example.searchengine.services;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import org.jsoup.Jsoup;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.example.searchengine.config.SiteList;
+import org.example.searchengine.config.SiteListConfiguration;
 import org.example.searchengine.dto.indexing.IndexingResponse;
 import org.example.searchengine.model.*;
 import org.example.searchengine.repositories.IndexRepository;
@@ -36,20 +37,22 @@ public class IndexingServiceImpl implements IndexingService  {
     private final PageRepository pageRepository;
     private final LemmaRepository lemmaRepository;
     private final IndexRepository indexRepository;
-    private final SiteList sites;
-    private final int PAGES_CHUNK = 100;
+    private final SiteListConfiguration sites;
+
+    @Value("${spring.jpa.properties.hibernate.jdbc.batch_size}")
+    private int chunkSize;
 
     private ForkJoinPool taskPool = new ForkJoinPool();
     private final Set<ForkJoinTask<?>> TASKS = ConcurrentHashMap.newKeySet();
 
-    private final Optional<SplitToLemmas> splitterEng = Optional.ofNullable(SplitToLemmas.getInstanceEng());
-    private final Optional<SplitToLemmas> splitterRus = Optional.ofNullable(SplitToLemmas.getInstanceRus());
-    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-    private final HttpClient client = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1).followRedirects(HttpClient.Redirect.NORMAL).build();
+    @Qualifier("SplitterEnglish")
+    private final Optional<SplitToLemmas> splitterEnglish;
+    @Qualifier("SplitterRussian")
+    private final Optional<SplitToLemmas> splitterRussian;
+    private final ObjectMapper objectMapper;
+    private final HttpClient client;
 
     public IndexingResponse fullIndex() {
-        IndexingResponse result = new IndexingResponse(true);
         if (!siteRepository.existsByStatusIs(IndexStatus.INDEXING)) {
             siteRepository.findAll().stream().map(Site::getId)
                     .peek(id -> siteRepository.updateStatus(id, IndexStatus.INDEXING,null))
@@ -75,19 +78,16 @@ public class IndexingServiceImpl implements IndexingService  {
                 }
             })));
         } else {
-            result.setResult(false);
-            result.setError(IndexError.STARTED.toString());
+            return IndexingResponse.builder().result(false).error(IndexError.STARTED.toString()).build();
         }
-        return result;
+        return IndexingResponse.builder().result(true).build();
     }
 
-    public  IndexingResponse stopIndex() {
-        IndexingResponse response = new IndexingResponse(false);
-
+    public IndexingResponse stopIndex() {
         if (TASKS.isEmpty()) {
-            response.setError(IndexError.NOTSTARTED.toString());
+            return IndexingResponse.builder().result(false).error(IndexError.NOTSTARTED.toString()).build();
         } else if(taskPool.isTerminating()) {
-            response.setError(IndexError.TERMINATING.toString());
+            return IndexingResponse.builder().result(false).error(IndexError.TERMINATING.toString()).build();
         } else {
             taskPool.shutdownNow();
             while(!taskPool.isTerminated()) {
@@ -96,15 +96,13 @@ public class IndexingServiceImpl implements IndexingService  {
             }
             TASKS.clear();
             taskPool = new ForkJoinPool();
-            response.setResult(true);
+            return IndexingResponse.builder().result(true).build();
         }
-
-        return response;
     }
 
     private Stream<Page> walkTask(Set<String> urlBuffer, Set<String> walkSet, Site siteEntity) {
         try {
-            Set<String> children = walkSet.parallelStream()
+            Set<String> children = walkSet.stream()
                     .map(x -> x.replace(siteEntity.getUrl(), ""))
                     .map(path -> path.isEmpty() ? "/" : path)
                     .map(path -> pageRepository.findBySiteAndPath(siteEntity, path).orElse(null))
@@ -119,8 +117,7 @@ public class IndexingServiceImpl implements IndexingService  {
                             TASKS.remove(task);
                         }}).collect(Collectors.toSet());
             if (children.isEmpty()) {
-                return urlBuffer.stream()
-                        .map(x -> x.replace(siteEntity.getUrl(), ""))
+                return urlBuffer.stream().map(x -> x.replace(siteEntity.getUrl(), ""))
                         .map(path -> path.isEmpty() ? "/" : path)
                         .flatMap(path -> pageRepository.findBySiteAndPath(siteEntity, path).stream());
             } else {
@@ -135,7 +132,6 @@ public class IndexingServiceImpl implements IndexingService  {
     }
 
     public IndexingResponse addIndex(String link) {
-        IndexingResponse result = new IndexingResponse(false);
         try {
             URI url = URI.create(link);
             String path = url.getPath();
@@ -152,22 +148,21 @@ public class IndexingServiceImpl implements IndexingService  {
                 siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXING, null);
                 pageRepository.findBySiteAndPath(siteEntity, path).ifPresent(this::serializeIndex);
                 siteRepository.updateStatus(siteEntity.getId(), IndexStatus.INDEXED, null);
-                result.setResult(true);
             } else {
-                result.setError(IndexError.PAGE_OUT_OF_CONFIG.toString());
+                return IndexingResponse.builder().result(false).error(IndexError.PAGE_OUT_OF_CONFIG.toString()).build();
             }
         } catch (RuntimeException e) {
-            result.setError(e.getMessage());
+            return IndexingResponse.builder().result(false).error(e.getMessage()).build();
         }
-        return result;
+        return IndexingResponse.builder().result(true).build();
     }
 
-    private Site serializeSite(String url, String name) {
+    private synchronized Site serializeSite(String url, String name) {
             return siteRepository.findByUrl(url).orElseGet(() -> siteRepository.saveAndFlush(new Site(url, name)));
     }
 
     private void serializePages(Site siteEntity, Set<String> urlSet) {
-        Semaphore httpSemaphore = new Semaphore(PAGES_CHUNK);
+        Semaphore httpSemaphore = new Semaphore(chunkSize);
         ConcurrentLinkedQueue<String> chunkBuffer = new ConcurrentLinkedQueue<>();
         try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
             for (String url : urlSet) {
@@ -185,7 +180,7 @@ public class IndexingServiceImpl implements IndexingService  {
                                 new Page(siteEntity, path, response.statusCode(), response.body()));
                         httpSemaphore.release();
                         chunkBuffer.add(jsonPage);
-                        if (chunkBuffer.size() >= PAGES_CHUNK) {
+                        if (chunkBuffer.size() >= chunkSize) {
                             savePages(chunkBuffer);
                         }
                     } catch (Exception e) {
@@ -197,12 +192,12 @@ public class IndexingServiceImpl implements IndexingService  {
         savePages(chunkBuffer);
     }
 
-    private synchronized Map<Lemma, Long> serializeLemmas(Page pageEntity) {
+    private Map<Lemma, Long> serializeLemmas(Page pageEntity) {
         try {
             Site siteEntity = pageEntity.getSite();
             String text = Jsoup.parse(pageEntity.getContent()).text();
-            Map<String, Long> lemmaMap = splitterEng.orElseThrow().splitTextToLemmas(text);
-            lemmaMap.putAll(splitterRus.orElseThrow().splitTextToLemmas(text));
+            Map<String, Long> lemmaMap = splitterEnglish.orElseThrow().splitTextToLemmas(text);
+            lemmaMap.putAll(splitterRussian.orElseThrow().splitTextToLemmas(text));
             Set<String> lemmas = lemmaRepository.findExistingLemmas(pageEntity.getSite().getId(), lemmaMap.keySet());
             List<Lemma> result = lemmaRepository.saveAll(lemmaMap.keySet().stream()
                     .filter(Predicate.not(lemmas::contains))
@@ -216,7 +211,7 @@ public class IndexingServiceImpl implements IndexingService  {
         }
     }
 
-    private void serializeIndex(Page pageEntity) {
+    private synchronized void serializeIndex(Page pageEntity) {
         try {
             indexRepository.insertAll(Stream.of(taskPool.submit(() -> serializeLemmas(pageEntity))).peek(TASKS::add)
                     .flatMap(task -> {
@@ -245,7 +240,7 @@ public class IndexingServiceImpl implements IndexingService  {
         }
     }
 
-    private void savePages(ConcurrentLinkedQueue<String> buffer) {
+    private synchronized void savePages(ConcurrentLinkedQueue<String> buffer) {
         if (buffer.isEmpty()) return;
         List<String> toInsert = new ArrayList<>(buffer);
         buffer.clear();
@@ -271,6 +266,6 @@ public class IndexingServiceImpl implements IndexingService  {
     private Map<String, String> getConfigSite(String site_regex) {
         return sites.getSites().stream()
                 .filter(config -> config.getUrl().matches(site_regex))
-                .collect(Collectors.toMap(SiteList.SiteRecord::getUrl, SiteList.SiteRecord::getName));
+                .collect(Collectors.toMap(SiteListConfiguration.SiteRecord::getUrl, SiteListConfiguration.SiteRecord::getName));
     }
 }

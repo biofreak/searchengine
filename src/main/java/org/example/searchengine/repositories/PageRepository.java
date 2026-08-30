@@ -3,7 +3,6 @@ package org.example.searchengine.repositories;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import org.example.searchengine.model.Page;
@@ -26,6 +25,7 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
             "'$[*]' COLUMNS (site_id INT PATH '$.site.id', " +
             "`path` TEXT PATH '$.path', " +
             "`code` INT PATH '$.code', " +
-            "content MEDIUMTEXT PATH '$.content')) pg", nativeQuery = true)
+            "content MEDIUMTEXT PATH '$.content')) pg " +
+            "ON DUPLICATE KEY UPDATE `code` = VALUES(`code`);", nativeQuery = true)
     void insertAll(String data);
 }

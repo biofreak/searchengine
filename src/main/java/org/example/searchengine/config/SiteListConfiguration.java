@@ -10,7 +10,7 @@ import java.util.List;
 @Data
 @Component
 @ConfigurationProperties(prefix = "indexing-settings")
-public class SiteList {
+public class SiteListConfiguration {
     public record SiteRecord(@Getter String url, @Getter String name) {}
     private List<SiteRecord> sites;
 }
