@@ -36,11 +36,10 @@ public class SiteWalk extends RecursiveTask<Stream<String>> {
                     .map(link ->    link.contains("?") ? link.substring(0, link.indexOf("?")) : link)
                     .map(link -> link.contains("#") ? link.substring(0, link.indexOf("#")) : link)
                     .filter(Predicate.not(String::isEmpty))
-                    .map(subPath -> subPath.replaceAll("^/|/$", ""))
-                    .filter(link -> !REFS.contains(link))
+                    .map(x -> x.replaceAll("^/|/$", "").replaceAll(" ", "%20"))
                     .map(x -> x.replace("\uFEFF", ""))
                     .map(String::strip)
-                    .map(x -> x.replaceAll(" ", "%20"))
+                    .filter(Predicate.not(REFS::contains))
                     .distinct();
         } catch (RuntimeException e) {
             return Stream.of();

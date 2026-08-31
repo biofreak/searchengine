@@ -38,5 +38,7 @@ spring:
 
 indexing-settings:
   sites:
-    - url: https://sendel.ru/
-      name: Sendel.Ru
+    - url: https://www.svetlovka.ru
+      name: Svetlovka
+    - url: https://www.playback.ru
+      name: PlayBack

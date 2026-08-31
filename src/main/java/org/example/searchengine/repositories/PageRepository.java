@@ -4,6 +4,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.example.searchengine.model.Page;
 import org.example.searchengine.model.Site;
@@ -18,7 +20,7 @@ public interface PageRepository extends JpaRepository<Page, Integer> {
     Integer countAllBySite(Site site);
     Integer countAllBySiteIn(List<Site> siteList);
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
     @Modifying
     @Query(value = "INSERT INTO `page` (site_id, `path`, `code`, content) " +
             "SELECT pg.* FROM JSON_TABLE(:data, " +
