@@ -175,7 +175,7 @@
                     <includes>
                         <include>**/*</include>
                     </includes>
-                    <merge>true</merge>
+                    <merge>false</merge>
                     <repositoryName>${repository.name}</repositoryName>
                     <repositoryOwner>${repository.owner}</repositoryOwner>
                     <server>github</server>
@@ -194,23 +194,23 @@
                 <artifactId>maven-release-plugin</artifactId>
                 <version>3.0.1</version>
                 <configuration>
-                    <tagBase>ssh://git@github.com/biofreak/searchengine/tags</tagBase>
+                    <tagBase>ssh://git@github.com/kridency/searchengine/tags</tagBase>
                 </configuration>
             </plugin>
         </plugins>
     </build>
 
     <scm>
-        <connection>scm:git:https://github.com/biofkreak/searchengine.git</connection>
-        <developerConnection>scm:git:ssh://git@github.com/biofreak/searchengine.git</developerConnection>
-        <url>https://github.com/biofreak/searchengine</url>
+        <connection>scm:git:https://github.com/kridency/searchengine.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/kridency/searchengine.git</developerConnection>
+        <url>https://github.com/kridency/searchengine</url>
         <tag>HEAD</tag>
     </scm>
     <distributionManagement>
         <repository>
             <id>github</id>
-            <name>GitHub biofreak Apache Maven Packages</name>
-            <url>https://maven.pkg.github.com/biofreak/maven-repo/</url>
+            <name>GitHub Kridency Apache Maven Packages</name>
+            <url>file://${project.basedir}/maven-repo/</url>
         </repository>
     </distributionManagement>
 
